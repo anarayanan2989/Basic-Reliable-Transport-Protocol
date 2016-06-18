@@ -1,0 +1,294 @@
+
+    Average number of transmissions made to send each character:
+
+string  - "The link layer is the second layer in OSI model"
+length  - 48
+
+prob    - probability of packet loss.
+samples - sample count for current step.
+total   - transmissions count.
+average - average number of transmission per character (total/length).
+
+prob        samples     total       average
+----------- ----------- ----------- ---------
+0.050000     5           49.2	      1.0400
+0.100000     5           49.2         1.0400
+0.150000     5           53.4	      1.1250	
+0.200000     5           54.6         1.1375
+0.250000     5           63.0         1.3125
+0.300000     5           89.6         1.8667
+0.350000     5           99.4         2.0708
+0.400000     5          103.5         2.1562
+0.450000     5          104.6         2.1792
+0.500000     5          106.4         2.2167
+
+
+rsocket.h ----------------------------------------------------------------------
+
+#define SOCK_BRP        10
+
+    Definition of SOCK_BRP type, used in 'r_socket()' function to select BRP
+socket type.
+
+#define BRP_MAX         25
+
+    We can assume that the maximum number of BRP sockets that can be opened
+is 25, so we use this value as maximum size of internal socket data table.
+
+#define MSG_MAX_COUNT   50
+
+    Also we can assume that the maximum size of message tables will not be more
+than 50 at any time, so we use this value as maximum size of this tables.
+
+#define T     2000
+
+    Send thread timeout in milliseconds.
+
+#define P     0.05
+
+    Probability of packet loss.
+
+
+rsocket.c ----------------------------------------------------------------------
+
+Data structures:
+
+typedef enum __attribute__((packed)) {brp_dat, brp_ack} brp_type;
+
+    'brp_type' enumeration contains type of network packet. 'brp_dat' used to
+inform recipient that this packet contains data, 'brp_ack' says to recipient
+that this is confirmation packet.
+
+
+typedef struct _message_t
+{
+    uint8_t idx;
+    brp_type type;
+    char data[]; // (C99 standard) the flexible array member should be last
+} _message_t;
+
+    This structure describes underlying packet format.
+
+field   description
+------- ---------------------------------------------------------------------
+idx     Message index field used for finding message in output queue when ACK
+        packet received.
+type    Type of message, described above.
+data    Just pointer to message data.
+
+
+typedef struct _msg_entry_t
+{
+    struct timespec start;
+    struct sockaddr addr;`
+    uint16_t size;
+    uint16_t read;
+    _message_t* msg;
+} _msg_entry_t;
+
+    This is auxiliary structure for storing and handling unacknowledged and
+received messages.
+
+field   description
+------- ---------------------------------------------------------------------
+start   Time stamp which hold last attempt to send message.
+addr    This field holds remote address which used for resending message in
+        case if ACK not received and sender address for 'r_recvfrom()'
+        function.
+size    This field holds full message size including underlying header
+        '_message_t' size.
+read    Size of read bytes by 'r_recvfrom()' function. If this equal to total
+        message size then message can be removed from input queue.
+msg     Pointer to '_msg_entry_t' structure. NULL means that current
+        '_msg_entry_t' free.
+
+
+typedef struct _sockfd_entry_t
+{
+    int sockfd;
+    size_t references;
+    size_t idx;
+    unsigned msg_idx;
+    unsigned trans_cnt;
+    pthread_t threads[2];
+    pthread_mutex_t mutex;
+    _msg_entry_t* unack_table; /// make an array
+    _msg_entry_t* recv_table;
+} _sockfd_entry_t;
+
+    Data structure which holds all main auxiliary  socket fields.
+
+field       description
+----------- -----------------------------------------------------------------
+sockfd      File descriptor for the socket.
+
+references  Reference counter.
+
+idx         Entry index into entry table.
+
+msg_idx     Circular (0 ... MSG_MAX_COUNT) message counter.
+
+trans_cnt   Total transmissions counter (send + resend).
+
+threads[2]  Pthread handles for receiver and transmitter threads.
+
+mutex       Mutex for protection input and output queues from concurrent
+            access.
+
+unack_table Unacknowledged-message table.
+
+recv_table  Received- message tables.
+
+
+static _sockfd_entry_t* _sdftable[BRP_MAX] = {0};
+
+    Static table, size equal to BRP_MAX. Used for storing '_sockfd_entry_t'
+structures.
+
+
+
+Used functions and descriptions of what they do in that file:
+
+function                description
+----------------------- -----------------------------------------------------
+timespecsub3            Used for correct subtraction current time stamp from
+                        last send time stamp.
+
+_sockfd_entry_new       Creates new socket file descriptor entry and
+                        initialize auxiliary fields.
+
+_free_msg_table         Used for cleaning and deallocation unacknowledged and
+                        received messages tables. 
+
+_sockfd_entry_free      Used to free allocated socket entry data.
+
+_sdftable_entry_new     Creates new socket entry data and store pointer into
+                        socket entry table.
+
+_sdftable_entry_retain  Checks is socket entry data present into socket entry
+                        table and increase reference counter if so.
+
+_sdftable_entry_release Checks is socket entry data present into socket entry
+                        table, decrease reference counter if so, if no
+                        references left calls '_sockfd_entry_free' and remove
+                        entry from entry table.
+
+calloc                  Allocates a block of memory for an array and
+                        initializes all its bits to zero.
+
+clock_gettime           Retrieve and set/update the time of last attempt to
+                        send message to recipient.
+
+close                   Closes a file descriptor for the socket.
+
+free                    Freed allocated memory.
+
+malloc                  Allocates a block of memory.
+
+memcpy                  Copies the values from the one location to another.
+
+pthread_cancel          Sends a cancellation request to the thread.
+
+pthread_create          Starts a new threads for sending and receiving.
+
+pthread_join            Suspend execution of the calling thread until the
+                        sending and receiving threads terminates, used to
+                        prevent access to freed data from threads.
+
+pthread_mutex_destroy   Destroy the mutex object.
+
+pthread_mutex_init      Initializes the mutex.
+
+pthread_mutex_lock      Locks mutex object.
+
+pthread_mutex_unlock    Unlocks mutex object.
+
+rand                    Used for simulation an unreliable link.
+
+r_isbuffer              Return true is output queue not empty.
+
+usleep                  Used for threads suspending until timeout occurs.
+
+
+user1.c ------------------------------------------------------------------------
+
+Used functions and descriptions of what they do in that file:
+
+function       description
+-------------- --------------------------------------------------------------
+error          Prints error message and terminates the process.
+
+exit           Terminate process is errors occur.
+
+fgets          Reads string from stdin.
+
+inet_aton      Convert string address representation to network order address.
+
+perror         Prints a textual description of the error code currently stored
+               in the system variable errno to stderr.
+
+r_bind         Used to bind brp socket into given address.
+
+r_close        Used to close brp socket.
+
+r_isbuffer     Used to hold process termination until data sending.
+
+r_sendto       Send data through brp socket.
+
+r_socket       Initializes brp socket.
+
+srand          Initializes seed for 'rand()' function.
+
+time           Use current time as random seed value.
+
+user2.c ------------------------------------------------------------------------
+
+Used functions and descriptions of what they do in that file:
+
+function       description
+-------------- --------------------------------------------------------------
+error          Prints error message and terminates the process.
+
+exit           Terminate process is errors occur.
+
+perror         Prints a textual description of the error code currently stored
+               in the system variable errno to stderr.
+
+r_bind         Used to bind brp socket into given address.
+
+r_close        Used to close brp socket.
+
+r_recvfrom     Receive data from brp socket.
+
+r_socket       Initializes brp socket.
+
+srand          Initializes seed for 'rand()' function.
+
+time           Use current time as random seed value.
+
+
+    While implementing project we use following development principles:
+
+1. Information hiding:
+
+    - Everything in a source file that can be hidden from the outside world
+    should be; only the documented external interface should be exposed.
+    - Everything that is exposed is declared in a header.
+    - That header is used where the functionality is needed (and where it is
+    defined).
+    - The header is self-protected - so it does not matter if it is included
+    multiple times.
+    - Design sets of functions to work on structures.
+
+2. Modular programming.
+3. Abstraction principle.
+4. Don't repeat yourself principle.
+5. YAGNI principle.
+6. Principles of networking and socket programing.
+
+
+    During development we faced with difficulties such as thread safety. This
+problems was solved by using mutual exclusion mechanism to protect our data from
+concurrent access and modification, we solve this by using POSIX thread mutex
+implementation.  Also we use threads synchronization to avoid manipulation with
+invalid data, and memory leaks.
